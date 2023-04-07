@@ -8,5 +8,4 @@
     <item
         android:id="@+id/cameraItem"
         android:title="Capture this moment" />
-    <item android:title="Item" />
 </menu>

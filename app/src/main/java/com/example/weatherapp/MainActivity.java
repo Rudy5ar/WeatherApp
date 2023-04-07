@@ -4,6 +4,8 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
@@ -21,6 +23,7 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.app.AlertDialog;
@@ -38,13 +41,16 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnSuccessListener;
 import android.Manifest;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -53,11 +59,12 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String API_KEY = "a87082bc2a12126498886d356718bcf1";
     private static final String API_URL = "https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric";
+    private static final String API_URL_FORECAST = "https://api.openweathermap.org/data/2.5/forecast?q=%s&appid=%s&units=metric";
+
     private static final int PERMISSION_REQUEST_CODE = 1;
     private static final int CAMERA_REQUEST_CODE = 2;
-    private static final int STORAGE_REQUEST_CODE = 3;
     private EditText input;
-
+    public static RecyclerView recyclerView;
     private TextView currentCityText, humidityText, windSpeedText, temperatureText;
 
     @Override
@@ -69,17 +76,18 @@ public class MainActivity extends AppCompatActivity {
         humidityText = findViewById(R.id.humidityText);
         windSpeedText = findViewById(R.id.windSpeedText);
         temperatureText = findViewById(R.id.temperatureText);
+        recyclerView = findViewById(R.id.forecastRecycler);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
         input = new EditText(this);
 
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            // If the app doesn't have permission, request it
+            // No permission
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, PERMISSION_REQUEST_CODE);
         } else {
-            // If the app already has permission, get the location
+            // Have permission
             getLocation(null);
-
         }
     }
 
@@ -106,10 +114,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String showSearchDialog() {
+
         final String[] city = {""};
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Search");
+
+        if (input.getParent() != null) {
+            ((ViewGroup)input.getParent()).removeView(input);
+            input.setText("");
+        }
 
         builder.setView(input);
         builder.setPositiveButton("Search", new DialogInterface.OnClickListener() {
@@ -118,6 +132,7 @@ public class MainActivity extends AppCompatActivity {
                 String searchText = input.getText().toString();
                 city[0] = searchText;
                 getLocation(city[0]);
+
             }
         });
         builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
@@ -194,6 +209,96 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private class GetForecastTask extends AsyncTask<String, Void, List<ForecastItem>> {
+        List<ForecastItem> data = new ArrayList<>();
+
+        @Override
+        protected List<ForecastItem> doInBackground(String... params) {
+            String cityName = params[0];
+            String url = String.format(API_URL_FORECAST, cityName, API_KEY);
+            RequestQueue queue = Volley.newRequestQueue(getApplicationContext());
+
+            JsonObjectRequest jsonObjectRequest = new JsonObjectRequest
+                    (Request.Method.GET, url, null, new Response.Listener<JSONObject>() {
+                        @Override
+                        public void onResponse(JSONObject response) {
+                            data = getForecastForCity(cityName);
+                            onPostExecute(data);
+                        }
+                    }, new Response.ErrorListener() {
+                        @Override
+                        public void onErrorResponse(VolleyError error) {
+                            Log.e("ERROR", error.toString());
+                        }
+                    });
+
+            queue.add(jsonObjectRequest);
+
+            return data;
+
+        }
+
+        @Override
+        protected void onPostExecute(List<ForecastItem> data) {
+            super.onPostExecute(data);
+            this.data = data;
+
+        }
+    }
+
+    public void updateUI(List<ForecastItem> data){
+        ForecastAdapter adapter = new ForecastAdapter(data);
+        recyclerView.setAdapter(adapter);
+        Log.d("size", String.valueOf(data.size()));
+    }
+
+    public List<ForecastItem> getForecastForCity(String cityName) {
+        List<ForecastItem> data = new ArrayList<>();
+
+        String url = "https://api.openweathermap.org/data/2.5/forecast?q=" + cityName + "&appid=" + API_KEY + "&units=metric";
+
+        JsonObjectRequest request = new JsonObjectRequest(Request.Method.GET, url, null,
+                new Response.Listener<JSONObject>() {
+                    @Override
+                    public void onResponse(JSONObject response) {
+                        try {
+
+                            JSONArray forecastList = response.getJSONArray("list");
+
+                            for (int i = 0; i < 5; i++) {
+
+                                JSONObject forecastData = forecastList.getJSONObject(i);
+
+                                String timeString = forecastData.getString("dt_txt");
+                                timeString = timeString.substring(11);
+                                JSONObject main = forecastData.getJSONObject("main");
+                                String temperature = String.valueOf(main.getDouble("temp"));
+                                Log.d("temp", temperature);
+
+                                ForecastItem fi = new ForecastItem(timeString, temperature);
+                                data.add(fi);
+                            }
+                            updateUI(data);
+                        } catch (JSONException e) {
+                            Log.d("firstError", e.getMessage());
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }, new Response.ErrorListener() {
+            @Override
+            public void onErrorResponse(VolleyError error) {
+                Log.d("secondError", error.getMessage());
+
+                Toast.makeText(MainActivity.this, error.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // add the request to the request queue
+        RequestQueue requestQueue = Volley.newRequestQueue(MainActivity.this);
+        requestQueue.add(request);
+        return data;
+    }
+
     @SuppressLint("MissingPermission")
     public void getLocation(String cityName) {
         FusedLocationProviderClient fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
@@ -209,6 +314,8 @@ public class MainActivity extends AppCompatActivity {
                                     String city = addresses.get(0).getLocality();
                                     currentCityText.setText(city);
                                     new GetWeatherDataTask().execute(city);
+                                    new GetForecastTask().execute(city);
+
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
@@ -223,6 +330,9 @@ public class MainActivity extends AppCompatActivity {
                 if (addresses != null && !addresses.isEmpty()) {
 
                     new GetWeatherDataTask().execute(cityName);
+                    new GetForecastTask().execute(cityName);
+
+
                 } else {
                     Toast.makeText(this, "The city you entered doesn't exist", Toast.LENGTH_SHORT).show();
                 }
@@ -231,7 +341,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
         }
-
     }
 
     private class GetWeatherDataTask extends AsyncTask<String, Void, WeatherData> {
@@ -282,6 +391,7 @@ public class MainActivity extends AppCompatActivity {
             temperatureText.setText(String.format("%.1f °C", weatherData.getTemperature()));
             humidityText.setText(String.format("%.1f%%", weatherData.getHumidity()));
             windSpeedText.setText(String.format("%.1f m/s", weatherData.getWindSpeed()));
+
         }
     }
 
